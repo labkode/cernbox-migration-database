@@ -70,7 +70,7 @@ func newSQLDriver(flags *cliFlags) (*sqlDriver, error) {
 }
 func (d *sqlDriver) getAllShares() ([]shareInfo, error) {
 	var entries []shareInfo
-	err := d.db.Select(&entries, "SELECT id,share_type,share_with,uid_owner,parent,item_type,item_source,item_target,file_source,file_target,permissions,stime,accepted,token FROM oc_share")
+	err := d.db.Select(&entries, "SELECT id,share_type,item_source,item_target,file_source,file_target from oc_share where share_type=3 and item_type='file' ORDER BY id;")
 	if err != nil {
 		return nil, err
 	}
@@ -83,10 +83,10 @@ type Metadata struct {
 }
 
 func (d *sqlDriver) getMetadataFromEOS(ID int64) (*Metadata, error) {
-	cmd := exec.Command("/usr/bin/eos", "-r", "0", "0", "file", "info", "inode:13", "-m")
+	cmd := exec.Command("/usr/bin/eos", "-r", "0", "0", "file", "info", fmt.Sprintf("inode:%d", ID), "-m")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Println(output)
+		fmt.Fprintln(os.Stderr,string(output))
 		return nil, err
 	}
 	kv := make(map[string]string)
@@ -108,22 +108,23 @@ func (d *sqlDriver) getMetadataFromEOS(ID int64) (*Metadata, error) {
 func main() {
 	flags := parseFlags()
 	os.Setenv("EOS_MGM_URL", flags.eosMGMURL)
-	fmt.Println(flags)
 	d, err := newSQLDriver(flags)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(os.Stderr,err)
 		os.Exit(1)
 	}
 	shares, err := d.getAllShares()
 	if err != nil {
-		fmt.Println("Cannot get all shares because ", err)
+		fmt.Fprintln(os.Stderr, "Cannot get all shares because ", err)
 		os.Exit(1)
 	}
 	for _, s := range shares {
-		fmt.Printf("ID:%d SHARE_TYPE:%d ITEM_SOURCE:%s ITEM_TARGET:%s FILE_SOURCE:%d FILE_TARGET:%s\n", s.ID, s.ShareType, s.ItemSource.String, s.ItemTarget.String, s.FileSource.Int64, s.FileTarget.String)
-		out, err := d.getMetadataFromEOS(s.FileSource.Int64)
+		meta, err := d.getMetadataFromEOS(s.FileSource.Int64)
 		if err != nil {
-			fmt.Println(out, err)
+			fmt.Fprintln(os.Stderr, err)
+		} else {
+			fmt.Printf("id:%d share_type:%d item_source:%s item_target:%s file_source:%d file_target:%s eospath:%s\n", s.ID, s.ShareType, s.ItemSource.String, s.ItemTarget.String, s.FileSource.Int64, s.FileTarget.String, strconv.Quote(meta.Path))
+
 		}
 	}
 
