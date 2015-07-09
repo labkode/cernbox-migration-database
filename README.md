@@ -2,6 +2,7 @@
 Tool for migrating public shares based on inode to use versions folder inode
 
 
+```
 Usage of cernbox-migration-database:
   -dbname="": The name of the database
   -debugn=false: Print debug information
@@ -11,3 +12,4 @@ Usage of cernbox-migration-database:
   -password="": The password to connect to the db
   -port=0: The port of the db
   -username="": The username to connect to the db
+```
