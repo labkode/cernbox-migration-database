@@ -204,7 +204,26 @@ func (d *sqlDriver) createVersionsFolder(fileMeta *Metadata) error {
 	}
 	return nil
 }
-
+func (d *sqlDriver) updateShareTable(shareInfo *shareInfo, versionsMeta *Metadata) error {
+	query := "UPDATE oc_share SET item_source=?,item_target=?,file_source=?,file_target=? WHERE id=?" 
+	stmt, err := d.db.Prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	result, err := stmt.Exec(fmt.Sprintf("%d",versionsMeta.Inode), "/" + fmt.Sprintf("%d", versionsMeta.Inode), versionsMeta.Inode, "/" + path.Base(versionsMeta.Path), shareInfo.ID)
+	if err != nil {
+		return err
+	}
+	numRowsAffected, err := result.RowsAffected()
+	if err != nil  {
+		return err
+	}
+	if numRowsAffected == 0 || numRowsAffected > 1  {
+		return fmt.Errorf("Cannot updated share because share id %d does not exists anymore", shareInfo.ID)
+	}
+	return nil
+}
 func main() {
 	flags := parseFlags()
 	os.Setenv("EOS_MGM_URL", flags.eosMGMURL)
@@ -243,8 +262,12 @@ func main() {
 			} else {
 				fmt.Printf("info:versionfolder id:%d path:%s\n", versionsMeta.Inode, versionsMeta.Path)
 			}
-			//TODO:  Update share with folder versions fileid/inode
+			err = d.updateShareTable(&s, versionsMeta)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			} else {
+
+			}
 		}
 	}
-
 }
