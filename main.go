@@ -29,6 +29,7 @@ type cliFlags struct {
 	dryRun     bool
 	eosMGMURL  string
 	debug bool
+	userPrefix string
 }
 
 func parseFlags() *cliFlags {
@@ -40,6 +41,7 @@ func parseFlags() *cliFlags {
 	flag.StringVar(&flags.dbName, "dbname", "", "The name of the database")
 	flag.BoolVar(&flags.dryRun, "dryrun", true, "With dry run enbaled the changes are not commited to the db")
 	flag.StringVar(&flags.eosMGMURL, "eosmgmurl", "root://eospps-slave.cern.ch", "The EOS MGM URL")
+	flag.StringVar(&flags.userPrefix, "userPrefix", "/eos/scratch/user/", "The path under users reside")
 	flag.BoolVar(&flags.debug, "debug", false, "Print debug information")
 	flag.Parse()
 	GLOBAL_FLAGS = flags
@@ -225,6 +227,12 @@ func main() {
 	for _, s := range shares {
 		meta, err := d.getMetadataFromEOS(s.FileSource.Int64)
 		// TODO: filter already versions folder or ones that are not under your homedir like recycle files
+		if strings.Contains(meta.Path, VERSIONS_PREFIX) {
+			continue
+		}	
+		if !strings.HasPrefix(meta.Path, GLOBAL_FLAGS.userPrefix) {
+			continue
+		}
 		if err != nil {
 			//fmt.Fprintln(os.Stderr, err)
 		} else {
@@ -235,6 +243,7 @@ func main() {
 			} else {
 				fmt.Printf("info:versionfolder id:%d path:%s\n", versionsMeta.Inode, versionsMeta.Path)
 			}
+			//TODO:  Update share with folder versions fileid/inode
 		}
 	}
 
