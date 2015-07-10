@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"bytes"
 
 	"database/sql"
 	_ "github.com/go-sql-driver/mysql"
@@ -18,6 +18,7 @@ import (
 )
 
 const VERSIONS_PREFIX = ".sys.v#."
+
 var GLOBAL_FLAGS *cliFlags
 
 type cliFlags struct {
@@ -28,7 +29,7 @@ type cliFlags struct {
 	dbName     string
 	dryRun     bool
 	eosMGMURL  string
-	debug bool
+	debug      bool
 	userPrefix string
 }
 
@@ -39,9 +40,9 @@ func parseFlags() *cliFlags {
 	flag.StringVar(&flags.dbHost, "host", "", "The host of the db")
 	flag.IntVar(&flags.dbPort, "port", 0, "The port of the db")
 	flag.StringVar(&flags.dbName, "dbname", "", "The name of the database")
-	flag.BoolVar(&flags.dryRun, "dryrun", true, "With dry run enbaled the changes are not commited to the db")
+	flag.BoolVar(&flags.dryRun, "dryrun", false, "With dry run enbaled the changes are not commited to the db")
 	flag.StringVar(&flags.eosMGMURL, "eosmgmurl", "root://eospps-slave.cern.ch", "The EOS MGM URL")
-	flag.StringVar(&flags.userPrefix, "userPrefix", "/eos/scratch/user/", "The path under users reside")
+	flag.StringVar(&flags.userPrefix, "userprefix", "/eos/scratch/user/", "The path under users reside")
 	flag.BoolVar(&flags.debug, "debug", false, "Print debug information")
 	flag.Parse()
 	GLOBAL_FLAGS = flags
@@ -102,7 +103,7 @@ func (d *sqlDriver) executeCMD(cmd *exec.Cmd) (string, string, error) {
 	cmd.Stderr = errBuf
 	err := cmd.Run()
 	if GLOBAL_FLAGS.debug {
-		fmt.Printf("DEBUG CMD: %+v ERR:%s", cmd,  err)
+		fmt.Printf("DEBUG CMD: %+v ERR:%s", cmd, err)
 	}
 	return outBuf.String(), errBuf.String(), err
 }
@@ -144,7 +145,7 @@ func (d *sqlDriver) getVersionsFolderMetadata(fileMeta *Metadata) (*Metadata, er
 					if err != nil {
 						return nil, err
 					}
-					
+
 					// if we are talking to the slave the creation of the versions folder may not has been replicated, so we retry ever
 					maxRetries := 5
 					err := fmt.Errorf("Version not created yet")
@@ -153,7 +154,7 @@ func (d *sqlDriver) getVersionsFolderMetadata(fileMeta *Metadata) (*Metadata, er
 					for maxRetries > 0 && err != nil {
 						_versionsMeta, _err := d.getMetadataFromEOSPath(versionsPath)
 						err = _err
-						versionsMeta = _versionsMeta 
+						versionsMeta = _versionsMeta
 						maxRetries--
 
 					}
@@ -205,21 +206,25 @@ func (d *sqlDriver) createVersionsFolder(fileMeta *Metadata) error {
 	return nil
 }
 func (d *sqlDriver) updateShareTable(shareInfo *shareInfo, versionsMeta *Metadata) error {
-	query := "UPDATE oc_share SET item_source=?,item_target=?,file_source=?,file_target=? WHERE id=?" 
+	fmt.Printf("RECORD: %d UPDATE oc_share SET item_source=%s,item_target=%s,file_source=%d,file_target=%s WHERE id=%d\n", shareInfo.ID, fmt.Sprintf("%d", versionsMeta.Inode), "/"+fmt.Sprintf("%d", versionsMeta.Inode), versionsMeta.Inode, "/"+path.Base(versionsMeta.Path), shareInfo.ID)
+	if GLOBAL_FLAGS.dryRun {
+		return nil
+	}
+	query := "UPDATE oc_share SET item_source=?,item_target=?,file_source=?,file_target=? WHERE id=?"
 	stmt, err := d.db.Prepare(query)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	result, err := stmt.Exec(fmt.Sprintf("%d",versionsMeta.Inode), "/" + fmt.Sprintf("%d", versionsMeta.Inode), versionsMeta.Inode, "/" + path.Base(versionsMeta.Path), shareInfo.ID)
+	result, err := stmt.Exec(fmt.Sprintf("%d", versionsMeta.Inode), "/"+fmt.Sprintf("%d", versionsMeta.Inode), versionsMeta.Inode, "/"+path.Base(versionsMeta.Path), shareInfo.ID)
 	if err != nil {
 		return err
 	}
 	numRowsAffected, err := result.RowsAffected()
-	if err != nil  {
+	if err != nil {
 		return err
 	}
-	if numRowsAffected == 0 || numRowsAffected > 1  {
+	if numRowsAffected == 0 || numRowsAffected > 1 {
 		return fmt.Errorf("Cannot updated share because share id %d does not exists anymore", shareInfo.ID)
 	}
 	return nil
@@ -245,29 +250,30 @@ func main() {
 
 	for _, s := range shares {
 		meta, err := d.getMetadataFromEOS(s.FileSource.Int64)
-		// TODO: filter already versions folder or ones that are not under your homedir like recycle files
-		if strings.Contains(meta.Path, VERSIONS_PREFIX) {
-			continue
-		}	
-		if !strings.HasPrefix(meta.Path, GLOBAL_FLAGS.userPrefix) {
-			continue
-		}
 		if err != nil {
-			//fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, err)
 		} else {
-			fmt.Printf("info:file id:%d share_type:%d item_source:%s item_target:%s file_source:%d file_target:%s eospath:%s uid:%s gid:%s\n", s.ID, s.ShareType, s.ItemSource.String, s.ItemTarget.String, s.FileSource.Int64, s.FileTarget.String, strconv.Quote(meta.Path), meta.UID, meta.GID)
+			fmt.Printf("RECORD: %d info:file id:%d share_type:%d item_source:%s item_target:%s file_source:%d file_target:%s eospath:%s uid:%s gid:%s\n", s.ID, s.ID, s.ShareType, s.ItemSource.String, s.ItemTarget.String, s.FileSource.Int64, s.FileTarget.String, strconv.Quote(meta.Path), meta.UID, meta.GID)
+			if strings.Contains(meta.Path, VERSIONS_PREFIX) {
+				fmt.Printf("RECORD: %d ALREADY POINTS TO THE VERSION FOLDER\n", s.ID)
+				continue
+			}
+			if !strings.HasPrefix(meta.Path, GLOBAL_FLAGS.userPrefix) {
+				fmt.Printf("RECORD: %d FILE NOT UNDER HOME DIRECTORY\n", s.ID)
+				continue
+			} 
 			versionsMeta, err := d.getVersionsFolderMetadata(meta)
 			if err != nil {
-				//fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, err)
 			} else {
-				fmt.Printf("info:versionfolder id:%d path:%s\n", versionsMeta.Inode, versionsMeta.Path)
+				fmt.Printf("RECORD: %d info:versionfolder id:%d path:%s\n", s.ID, versionsMeta.Inode, versionsMeta.Path)
 			}
 			err = d.updateShareTable(&s, versionsMeta)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
-			} else {
-
 			}
 		}
 	}
+	fmt.Printf("Sucess. Dry run: %t\n", GLOBAL_FLAGS.dryRun)
+	os.Exit(0)
 }
