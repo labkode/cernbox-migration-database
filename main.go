@@ -94,6 +94,7 @@ type Metadata struct {
 	Path  string
 	UID   string
 	GID   string
+	Size  int64
 }
 
 func (d *sqlDriver) executeCMD(cmd *exec.Cmd) (string, string, error) {
@@ -193,7 +194,8 @@ func (d *sqlDriver) parseFileInfo(raw string) (*Metadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Metadata{Inode: inodeInt64, Path: kv["file"], UID: kv["uid"], GID: kv["gid"]}
+	sizeInt64, err := strconv.ParseInt(kv["size"], 10, 64)
+	m := &Metadata{Inode: inodeInt64, Path: kv["file"], UID: kv["uid"], GID: kv["gid"], Size: sizeInt64}
 	return m, nil
 }
 func (d *sqlDriver) createVersionsFolder(fileMeta *Metadata) error {
@@ -254,14 +256,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
 			fmt.Printf("RECORD: %d info:file id:%d share_type:%d item_source:%s item_target:%s file_source:%d file_target:%s eospath:%s uid:%s gid:%s\n", s.ID, s.ID, s.ShareType, s.ItemSource.String, s.ItemTarget.String, s.FileSource.Int64, s.FileTarget.String, strconv.Quote(meta.Path), meta.UID, meta.GID)
-			if strings.Contains(meta.Path, VERSIONS_PREFIX) {
+			if strings.HasPrefix(path.Base(path.Clean(meta.Path)), VERSIONS_PREFIX) {
 				fmt.Printf("RECORD: %d ALREADY POINTS TO THE VERSION FOLDER\n", s.ID)
 				continue
 			}
 			if !strings.HasPrefix(meta.Path, GLOBAL_FLAGS.userPrefix) {
 				fmt.Printf("RECORD: %d FILE NOT UNDER HOME DIRECTORY\n", s.ID)
 				continue
-			} 
+			}
 			versionsMeta, err := d.getVersionsFolderMetadata(meta)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
