@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,7 +28,7 @@ type cliFlags struct {
 	dbHost     string
 	dbPort     int
 	dbName     string
-	dryRun     bool
+	noTouchDb  bool
 	eosMGMURL  string
 	debug      bool
 	userPrefix string
@@ -40,7 +41,7 @@ func parseFlags() *cliFlags {
 	flag.StringVar(&flags.dbHost, "host", "", "The host of the db")
 	flag.IntVar(&flags.dbPort, "port", 0, "The port of the db")
 	flag.StringVar(&flags.dbName, "dbname", "", "The name of the database")
-	flag.BoolVar(&flags.dryRun, "dryrun", false, "With dry run enbaled the changes are not commited to the db")
+	flag.BoolVar(&flags.noTouchDb, "notouchdb", false, "With dry run enbaled the changes are not commited to the db")
 	flag.StringVar(&flags.eosMGMURL, "eosmgmurl", "root://eospps-slave.cern.ch", "The EOS MGM URL")
 	flag.StringVar(&flags.userPrefix, "userprefix", "/eos/scratch/user/", "The path under users reside")
 	flag.BoolVar(&flags.debug, "debug", false, "Print debug information")
@@ -209,7 +210,7 @@ func (d *sqlDriver) createVersionsFolder(fileMeta *Metadata) error {
 }
 func (d *sqlDriver) updateShareTable(shareInfo *shareInfo, versionsMeta *Metadata) error {
 	fmt.Printf("RECORD: %d UPDATE oc_share SET item_source=%s,item_target=%s,file_source=%d,file_target=%s WHERE id=%d\n", shareInfo.ID, fmt.Sprintf("%d", versionsMeta.Inode), "/"+fmt.Sprintf("%d", versionsMeta.Inode), versionsMeta.Inode, "/"+path.Base(versionsMeta.Path), shareInfo.ID)
-	if GLOBAL_FLAGS.dryRun {
+	if GLOBAL_FLAGS.noTouchDb {
 		return nil
 	}
 	query := "UPDATE oc_share SET item_source=?,item_target=?,file_source=?,file_target=? WHERE id=?"
@@ -250,32 +251,66 @@ func main() {
 		os.Exit(1)
 	}
 
+	const maxConcurrency = 20 // for example
+	var throttle = make(chan int, maxConcurrency)
+
+	var wg sync.WaitGroup
 	for _, s := range shares {
-		meta, err := d.getMetadataFromEOS(s.FileSource.Int64)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		} else {
-			fmt.Printf("RECORD: %d info:file id:%d share_type:%d item_source:%s item_target:%s file_source:%d file_target:%s eospath:%s uid:%s gid:%s\n", s.ID, s.ID, s.ShareType, s.ItemSource.String, s.ItemTarget.String, s.FileSource.Int64, s.FileTarget.String, strconv.Quote(meta.Path), meta.UID, meta.GID)
-			if strings.HasPrefix(path.Base(path.Clean(meta.Path)), VERSIONS_PREFIX) {
-				fmt.Printf("RECORD: %d ALREADY POINTS TO THE VERSION FOLDER\n", s.ID)
-				continue
-			}
-			if !strings.HasPrefix(meta.Path, GLOBAL_FLAGS.userPrefix) {
-				fmt.Printf("RECORD: %d FILE NOT UNDER HOME DIRECTORY\n", s.ID)
-				continue
-			}
-			versionsMeta, err := d.getVersionsFolderMetadata(meta)
+		throttle <- 1 // whatever number
+		wg.Add(1)
+		go func(d *sqlDriver, s shareInfo, wg *sync.WaitGroup, throttle chan int) {
+			defer wg.Done()
+			defer func() {
+				<-throttle
+			}()
+			meta, err := d.getMetadataFromEOS(s.FileSource.Int64)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
+				return
 			} else {
-				fmt.Printf("RECORD: %d info:versionfolder id:%d path:%s\n", s.ID, versionsMeta.Inode, versionsMeta.Path)
-				err = d.updateShareTable(&s, versionsMeta)
+				fmt.Printf("RECORD: %d info:file id:%d share_type:%d item_source:%s item_target:%s file_source:%d file_target:%s eospath:%s uid:%s gid:%s\n", s.ID, s.ID, s.ShareType, s.ItemSource.String, s.ItemTarget.String, s.FileSource.Int64, s.FileTarget.String, strconv.Quote(meta.Path), meta.UID, meta.GID)
+				parts := strings.Split(path.Clean(meta.Path), "/")
+				parentDir := parts[len(parts)-2]
+				if strings.HasPrefix(path.Base(meta.Path), VERSIONS_PREFIX) {
+					fmt.Printf("RECORD: %d ALREADY POINTS TO THE VERSION FOLDER\n", s.ID)
+					return
+				}
+				if !strings.HasPrefix(meta.Path, GLOBAL_FLAGS.userPrefix) {
+					fmt.Printf("RECORD: %d FILE NOT UNDER HOME DIRECTORY\n", s.ID)
+					return
+				}
+				if strings.HasPrefix(parentDir, VERSIONS_PREFIX) {
+					fmt.Printf("RECORD: %d POINTS TO A VERSION\n", s.ID)
+					versionFolder := path.Dir(meta.Path)
+					versionsMeta, err := d.getMetadataFromEOSPath(versionFolder)
+					if err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						return
+					}
+					fmt.Printf("RECORD: %d info:versionfolder id:%d path:%s\n", s.ID, versionsMeta.Inode, versionsMeta.Path)
+					err = d.updateShareTable(&s, versionsMeta)
+					if err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						return
+					}
+					return
+				}
+				versionsMeta, err := d.getVersionsFolderMetadata(meta)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, err)
+					return
+				} else {
+					fmt.Printf("RECORD: %d info:versionfolder id:%d path:%s\n", s.ID, versionsMeta.Inode, versionsMeta.Path)
+					err = d.updateShareTable(&s, versionsMeta)
+					if err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						return
+					}
 				}
 			}
-		}
+		}(d, s, &wg, throttle)
 	}
-	fmt.Printf("Sucess. Dry run: %t\n", GLOBAL_FLAGS.dryRun)
+	wg.Wait()
+	fmt.Printf("Sucess. Dry run: %t\n", GLOBAL_FLAGS.noTouchDb)
 	os.Exit(0)
 }
