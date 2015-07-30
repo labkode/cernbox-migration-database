@@ -267,10 +267,10 @@ func main() {
 				fmt.Fprintln(os.Stderr, err)
 			} else {
 				fmt.Printf("RECORD: %d info:versionfolder id:%d path:%s\n", s.ID, versionsMeta.Inode, versionsMeta.Path)
-			}
-			err = d.updateShareTable(&s, versionsMeta)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				err = d.updateShareTable(&s, versionsMeta)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+				}
 			}
 		}
 	}
