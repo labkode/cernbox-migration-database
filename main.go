@@ -45,7 +45,7 @@ func parseFlags() *cliFlags {
 	flag.BoolVar(&flags.noTouchDb, "notouchdb", false, "With dry run enbaled the changes are not commited to the db")
 	flag.StringVar(&flags.eosMGMURL, "eosmgmurl", "root://eospps-slave.cern.ch", "The EOS MGM URL")
 	flag.StringVar(&flags.userPrefix, "userprefix", "/eos/scratch/user/", "The path under users reside")
-	flag.StringVar(&flags.user, "user", "ourense", "Run the migration just for this user")
+	flag.StringVar(&flags.user, "user", "", "Run the migration just for this user")
 	flag.BoolVar(&flags.debug, "debug", false, "Print debug information")
 	flag.Parse()
 	GLOBAL_FLAGS = flags
@@ -206,7 +206,7 @@ func (d *sqlDriver) parseFileInfo(raw string) (*Metadata, error) {
 	return m, nil
 }
 func (d *sqlDriver) createVersionsFolder(fileMeta *Metadata) error {
-	cmd := exec.Command("/usr/bin/eos", "-r", fileMeta.UID, fileMeta.GID, "cp", fileMeta.Path, fileMeta.Path)
+	cmd := exec.Command("/usr/bin/eos", "-r", fileMeta.UID, fileMeta.GID, "file", "version", fileMeta.Path)
 	_, stderr, err := d.executeCMD(cmd)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, stderr)
