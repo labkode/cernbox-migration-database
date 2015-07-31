@@ -32,6 +32,7 @@ type cliFlags struct {
 	eosMGMURL  string
 	debug      bool
 	userPrefix string
+	user       string
 }
 
 func parseFlags() *cliFlags {
@@ -44,6 +45,7 @@ func parseFlags() *cliFlags {
 	flag.BoolVar(&flags.noTouchDb, "notouchdb", false, "With dry run enbaled the changes are not commited to the db")
 	flag.StringVar(&flags.eosMGMURL, "eosmgmurl", "root://eospps-slave.cern.ch", "The EOS MGM URL")
 	flag.StringVar(&flags.userPrefix, "userprefix", "/eos/scratch/user/", "The path under users reside")
+	flag.StringVar(&flags.user, "user", "ourense", "Run the migration just for this user")
 	flag.BoolVar(&flags.debug, "debug", false, "Print debug information")
 	flag.Parse()
 	GLOBAL_FLAGS = flags
@@ -83,7 +85,11 @@ func newSQLDriver(flags *cliFlags) (*sqlDriver, error) {
 }
 func (d *sqlDriver) getAllShares() ([]shareInfo, error) {
 	var entries []shareInfo
-	err := d.db.Select(&entries, "SELECT id,share_type,item_source,item_target,file_source,file_target from oc_share where share_type=3 and item_type='file' ORDER BY id;")
+	selectStmt := "SELECT id,share_type,item_source,item_target,file_source,file_target from oc_share where share_type=3 and item_type='file' ORDER BY id;"
+	if GLOBAL_FLAGS.user != "" {
+		selectStmt = fmt.Sprintf("SELECT id,share_type,item_source,item_target,file_source,file_target from oc_share where share_type=3 and item_type='file' and uid_owner='%s' ORDER BY id;", GLOBAL_FLAGS.user)
+	}
+	err := d.db.Select(&entries, selectStmt)
 	if err != nil {
 		return nil, err
 	}
